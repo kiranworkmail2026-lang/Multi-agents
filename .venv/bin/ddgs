@@ -1,0 +1,8 @@
+#!/bin/sh
+'''exec' "/Users/kirannagarajan/Desktop/Projects/Marketing Team/Multi-agents/.venv/bin/python3.11" "$0" "$@"
+' '''
+import sys
+from duckduckgo_search.cli import safe_entry_point
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(safe_entry_point())
