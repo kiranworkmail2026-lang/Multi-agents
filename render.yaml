@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: multi-agent-svc
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    # Ingest is performed lazily on container startup by server.py's lifespan
+    # hook (covers fresh deploys AND silent restarts on ephemeral disk).
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      # Points at the user-hosted Ollama instance (gemma4:e4b + nomic-embed-text).
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_MODEL
+        value: gemma4:e4b
+      - key: EMBED_MODEL
+        value: nomic-embed-text
+      - key: OLLAMA_NUM_CTX
+        value: "8192"
+      # Web search.
+      - key: SERPAPI_API_KEY
+        sync: false
+      # Shared secret between this service and the Go backend.
+      - key: SERVICE_API_KEY
+        generateValue: true

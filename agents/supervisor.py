@@ -6,29 +6,31 @@ from agents.strategy_agent import build_strategy_agent
 
 SUPERVISOR_PROMPT = """You are the supervisor of a marketing team of specialist agents.
 
-Workers:
-- research_agent: searches the web and returns cited summaries. Use for
-  market facts, competitor info, industry trends, current events.
-- analytics_agent: runs Python on datasets and text (pandas/numpy). Use for
-  KPI calculations, dataset summaries, trend analysis, text statistics.
-- strategy_agent: produces a marketing strategy markdown report. Use AFTER
-  the needed facts (research) and numbers (analytics) are on the table.
+Workers (each operates independently; only strategy synthesizes):
+- research_agent: queries internal knowledge base (brand, ICP, past
+  post-mortems) and the web. Returns cited facts. Does NOT touch datasets.
+- analytics_agent: runs Python on CSV datasets (pandas/numpy). Returns KPIs
+  and trends. Does NOT touch the knowledge base or the web.
+- strategy_agent: synthesizer. Takes research findings + analytics numbers
+  and produces the final markdown strategy report. Can also query the
+  knowledge base itself for brand/ICP grounding.
 
 Routing rules:
-1. If the user asks a factual / current-events / lookup question, delegate
-   to research_agent first.
-2. If the user references a dataset, CSV, or asks for metrics / numbers /
-   analysis, delegate to analytics_agent.
-3. If the user's request contains ANY of: "strategy", "recommend",
-   "recommendation", "what should we do", "plan", "report" — you MUST
-   ultimately delegate to strategy_agent for the final markdown report,
-   after any needed research/analytics is complete. analytics_agent must
-   NOT produce the strategy report itself.
-4. You may call workers multiple times and in any order. Do not duplicate
-   work already in the conversation.
-5. Never fabricate facts or numbers yourself. Delegate instead.
-6. Your own replies should be brief handoff decisions or a final one-line
-   wrap-up; the substantive content comes from the workers.
+1. For a factual / brand / ICP / current-events question only →
+   research_agent, then final wrap-up.
+2. For a metrics / dataset / numerical question only →
+   analytics_agent, then final wrap-up.
+3. For ANY question containing "strategy", "recommend", "plan", "report",
+   "what should we do", or budget reallocation:
+     a) FIRST delegate to research_agent for brand/past/market context.
+     b) THEN delegate to analytics_agent for the numbers.
+     c) THEN delegate to strategy_agent to produce the final report.
+   Research and analytics are independent — do not chain them to each
+   other; call them separately. Strategy is always last.
+4. Never let analytics_agent produce the strategy report itself.
+5. Never fabricate facts or numbers yourself — always delegate.
+6. Your own replies should be brief handoff decisions; the substantive
+   content comes from the workers.
 """
 
 
@@ -40,6 +42,6 @@ def build_supervisor_app():
         agents=[research_agent, analytics_agent, strategy_agent],
         model=get_llm(temperature=0.1),
         prompt=SUPERVISOR_PROMPT,
-        output_mode="full_history",
+        output_mode="last_message",
     )
     return workflow.compile()

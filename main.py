@@ -1,6 +1,7 @@
 import sys
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from agents.supervisor import build_supervisor_app
+from agent_runtime import pick_final_answer
 
 
 def _preview(text: str, limit: int = 2000) -> str:
@@ -43,21 +44,7 @@ def run(query: str) -> None:
                     print(_preview(content))
                 print()
 
-    # Pick a sensible final answer: prefer the last substantive AIMessage,
-    # skipping empty ones and short handoff acknowledgements.
-    HANDOFF_TOKENS = ("transferring", "transferred", "delegating")
-    final_text = ""
-    for m in reversed(all_messages):
-        if not isinstance(m, AIMessage):
-            continue
-        c = (m.content or "").strip()
-        if not c:
-            continue
-        low = c.lower()
-        if len(c) < 120 and any(low.startswith(t) for t in HANDOFF_TOKENS):
-            continue
-        final_text = c
-        break
+    final_text = pick_final_answer(all_messages)
 
     print("=" * 72)
     print("FINAL ANSWER")
