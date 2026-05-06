@@ -1,12 +1,15 @@
-"""Chroma client + Ollama embedding function factory (cached singleton)."""
+"""Chroma client + Google Gemini embedding function (cached singleton).
+
+Uses Google's gemini-embedding-001 (768-dim) via the langchain-google-genai
+package. GOOGLE_API_KEY must be set in the environment.
+"""
 from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
 
 import chromadb
-import httpx
-import ollama
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 PROJECT_ROOT = Path(__file__).parent
 VECTORDB_DIR = PROJECT_ROOT / "vectordb"
@@ -16,35 +19,24 @@ _client = None
 _collection = None
 
 
-class OllamaEmbedding:
-    """Custom Ollama embedding function with long timeout + keep_alive.
+class GeminiEmbedding:
+    """Chroma-compatible adapter around langchain-google-genai's embeddings.
 
-    The stock chromadb.OllamaEmbeddingFunction uses a ~60s httpx timeout,
-    which isn't enough when Ollama has to swap a cold embedding model in
-    while gemma4:e4b is resident. We raise the timeout and set keep_alive
-    so the embedding model stays hot for subsequent calls in the session.
+    Implements the chromadb EmbeddingFunction protocol:
+      __call__, name, get_config, build_from_config, default_space, is_legacy.
     """
 
-    def __init__(self, model_name: str, url: str, keep_alive: str = "30m"):
+    def __init__(self, model_name: str = "gemini-embedding-001"):
         self.model_name = model_name
-        self.url = url
-        self.keep_alive = keep_alive
-        self._client = ollama.Client(
-            host=url,
-            timeout=httpx.Timeout(300.0, connect=10.0),
-        )
+        # langchain-google-genai picks up GOOGLE_API_KEY from env automatically.
+        self._inner = GoogleGenerativeAIEmbeddings(model=model_name)
 
-    def name(self) -> str:  # chromadb EmbeddingFunction protocol
-        return f"ollama-{self.model_name}"
+    def name(self) -> str:  # chromadb protocol
+        return f"gemini-{self.model_name.split('/')[-1]}"
 
     def __call__(self, input: list[str]) -> list[list[float]]:
-        # ollama.Client.embed handles batching natively in newer versions
-        resp = self._client.embed(
-            model=self.model_name,
-            input=input,
-            keep_alive=self.keep_alive,
-        )
-        return resp["embeddings"]
+        # embed_documents handles batching/retries internally.
+        return self._inner.embed_documents(list(input))
 
     def embed_query(self, input: list[str]) -> list[list[float]]:
         return self.__call__(input)
@@ -53,15 +45,11 @@ class OllamaEmbedding:
         return self.__call__(input)
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "OllamaEmbedding":
-        return OllamaEmbedding(
-            model_name=config["model_name"],
-            url=config["url"],
-            keep_alive=config.get("keep_alive", "30m"),
-        )
+    def build_from_config(config: dict[str, Any]) -> "GeminiEmbedding":
+        return GeminiEmbedding(model_name=config.get("model_name", "gemini-embedding-001"))
 
     def get_config(self) -> dict[str, Any]:
-        return {"model_name": self.model_name, "url": self.url, "keep_alive": self.keep_alive}
+        return {"model_name": self.model_name}
 
     def default_space(self) -> str:
         return "cosine"
@@ -70,10 +58,9 @@ class OllamaEmbedding:
         return False
 
 
-def _embedding_fn() -> OllamaEmbedding:
-    return OllamaEmbedding(
-        model_name=os.getenv("EMBED_MODEL", "nomic-embed-text"),
-        url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+def _embedding_fn() -> GeminiEmbedding:
+    return GeminiEmbedding(
+        model_name=os.getenv("EMBED_MODEL", "gemini-embedding-001"),
     )
 
 

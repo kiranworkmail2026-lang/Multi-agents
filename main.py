@@ -1,11 +1,11 @@
 import sys
 from langchain_core.messages import HumanMessage
 from agents.supervisor import build_supervisor_app
-from agent_runtime import pick_final_answer
+from agent_runtime import pick_final_answer, as_text
 
 
-def _preview(text: str, limit: int = 2000) -> str:
-    text = (text or "").strip()
+def _preview(text, limit: int = 2000) -> str:
+    text = as_text(text).strip()
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... [truncated {len(text) - limit} chars]"

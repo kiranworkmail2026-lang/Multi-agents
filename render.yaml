@@ -9,15 +9,14 @@ services:
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
-      # Points at the user-hosted Ollama instance (gemma4:e4b + nomic-embed-text).
-      - key: OLLAMA_BASE_URL
+      # Google AI Studio key — chat (gemma-4-31b-it) + embeddings (gemini-embedding-001).
+      # Get one at https://aistudio.google.com/apikey
+      - key: GOOGLE_API_KEY
         sync: false
-      - key: OLLAMA_MODEL
-        value: gemma4:e4b
+      - key: GEMINI_MODEL
+        value: gemma-4-31b-it
       - key: EMBED_MODEL
-        value: nomic-embed-text
-      - key: OLLAMA_NUM_CTX
-        value: "8192"
+        value: gemini-embedding-001
       # Web search.
       - key: SERPAPI_API_KEY
         sync: false

@@ -15,6 +15,31 @@ HANDOFF_TOKENS = ("transferring", "transferred", "delegating")
 HANDOFF_MAX_LEN = 120
 
 
+def as_text(content) -> str:
+    """Normalize LangChain message content to a plain string.
+
+    Gemini (langchain-google-genai) returns content as a list of parts
+    (e.g. [{"type":"text","text":"..."}]) on tool-calling turns; Ollama
+    returns it as a plain string. Normalize both to str so downstream
+    code (.strip(), startswith) works uniformly.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                t = p.get("text") or p.get("content") or ""
+                if isinstance(t, str) and t:
+                    parts.append(t)
+        return "\n".join(parts)
+    return str(content)
+
+
 def pick_final_answer(messages: list) -> str:
     """Return the last substantive AIMessage content.
 
@@ -24,7 +49,7 @@ def pick_final_answer(messages: list) -> str:
     for m in reversed(messages):
         if not isinstance(m, AIMessage):
             continue
-        c = (m.content or "").strip()
+        c = as_text(m.content).strip()
         if not c:
             continue
         low = c.lower()
@@ -72,7 +97,7 @@ def stream_events(query: str, recursion_limit: int = 40) -> Iterator[dict]:
                         "node": node_name,
                         "role": m.__class__.__name__,
                         "name": getattr(m, "name", None) or ns_label,
-                        "content": getattr(m, "content", "") or "",
+                        "content": as_text(getattr(m, "content", "")),
                         "tool_calls": _tool_call_names(m),
                     }
     except Exception as e:  # pragma: no cover
