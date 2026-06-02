@@ -3,6 +3,7 @@ from llm import get_llm
 from agents.research_agent import build_research_agent
 from agents.analytics_agent import build_analytics_agent
 from agents.strategy_agent import build_strategy_agent
+from agents.seo_agent import build_seo_agent
 
 SUPERVISOR_PROMPT = """You are the supervisor of a marketing team of specialist agents.
 
@@ -11,8 +12,12 @@ Workers (each operates independently; only strategy synthesizes):
   post-mortems) and the web. Returns cited facts. Does NOT touch datasets.
 - analytics_agent: runs Python on CSV datasets (pandas/numpy). Returns KPIs
   and trends. Does NOT touch the knowledge base or the web.
-- strategy_agent: synthesizer. Takes research findings + analytics numbers
-  and produces the final markdown strategy report. Can also query the
+- seo_agent: keyword research, SERP / content-gap analysis, and on-page
+  audits via SerpAPI + HTML inspection. Owns anything related to organic
+  search visibility, keywords, content gaps, or auditing a URL. Does NOT
+  produce strategy plans.
+- strategy_agent: synthesizer. Takes findings from any other agents and
+  produces the final markdown strategy report. Can also query the
   knowledge base itself for brand/ICP grounding.
 
 Routing rules:
@@ -31,6 +36,13 @@ Routing rules:
 5. Never fabricate facts or numbers yourself — always delegate.
 6. Your own replies should be brief handoff decisions; the substantive
    content comes from the workers.
+7. For ANY question about "SEO", "keywords", "ranking", "search visibility",
+   "content gap", "on-page", "audit URL", or "site optimization":
+     a) Delegate to seo_agent.
+     b) If the question ALSO asks for a plan / strategy / recommendation,
+        follow with strategy_agent to synthesize the SEO findings into a
+        prioritized action plan. Otherwise, finish with seo_agent's
+        report directly.
 """
 
 
@@ -38,8 +50,9 @@ def build_supervisor_app():
     research_agent = build_research_agent()
     analytics_agent = build_analytics_agent()
     strategy_agent = build_strategy_agent()
+    seo_agent = build_seo_agent()
     workflow = create_supervisor(
-        agents=[research_agent, analytics_agent, strategy_agent],
+        agents=[research_agent, analytics_agent, strategy_agent, seo_agent],
         model=get_llm(temperature=0.1),
         prompt=SUPERVISOR_PROMPT,
         output_mode="last_message",
