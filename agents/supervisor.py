@@ -1,9 +1,11 @@
 from langgraph_supervisor import create_supervisor
 from llm import get_llm
+from checkpoint import get_checkpointer
 from agents.research_agent import build_research_agent
 from agents.analytics_agent import build_analytics_agent
 from agents.strategy_agent import build_strategy_agent
 from agents.seo_agent import build_seo_agent
+from agents.blog_agent import build_blog_agent
 
 SUPERVISOR_PROMPT = """You are the supervisor of a marketing team of specialist agents.
 
@@ -12,13 +14,15 @@ Workers (each operates independently; only strategy synthesizes):
   post-mortems) and the web. Returns cited facts. Does NOT touch datasets.
 - analytics_agent: runs Python on CSV datasets (pandas/numpy). Returns KPIs
   and trends. Does NOT touch the knowledge base or the web.
-- seo_agent: keyword research, SERP / content-gap analysis, and on-page
-  audits via SerpAPI + HTML inspection. Owns anything related to organic
-  search visibility, keywords, content gaps, or auditing a URL. Does NOT
-  produce strategy plans.
+- seo_agent: keyword research, SERP / content-gap analysis, on-page audits,
+  AND proposing blog topics for human approval. Owns anything related to
+  organic search visibility, keywords, or auditing a URL.
+- blog_agent: writes the full blog post AFTER a topic has been approved
+  by the human. Only invoke after seo_agent has run the topic-approval
+  flow. Does NOT do keyword research or SEO audits itself.
 - strategy_agent: synthesizer. Takes findings from any other agents and
-  produces the final markdown strategy report. Can also query the
-  knowledge base itself for brand/ICP grounding.
+  produces a final markdown strategy report. Can also query the knowledge
+  base directly for brand/ICP grounding.
 
 Routing rules:
 1. For a factual / brand / ICP / current-events question only →
@@ -39,22 +43,44 @@ Routing rules:
 7. For ANY question about "SEO", "keywords", "ranking", "search visibility",
    "content gap", "on-page", "audit URL", or "site optimization":
      a) Delegate to seo_agent.
-     b) If the question ALSO asks for a plan / strategy / recommendation,
-        follow with strategy_agent to synthesize the SEO findings into a
-        prioritized action plan. Otherwise, finish with seo_agent's
-        report directly.
+     b) If the question ALSO asks for a plan / strategy, follow with
+        strategy_agent to synthesize the SEO findings.
+8. For ANY question about writing a "blog", "article", "post", "content
+   piece", or "blog idea":
+     a) FIRST delegate to seo_agent. It will research candidate topics
+        and call request_topic_approval — the run will PAUSE for human
+        topic selection. This is expected.
+     b) When seo_agent returns with the chosen topic (after the human
+        has approved), delegate to blog_agent to draft the full post.
+        Do NOT route to strategy_agent for blogs — blog_agent is the
+        terminal writer.
 """
 
 
+_app = None
+
+
 def build_supervisor_app():
+    """Compile the supervisor graph once per process and reuse it.
+
+    Reusing the compiled graph keeps the checkpointer connection pool
+    alive and avoids re-building agent ReAct nodes on every request.
+    """
+    global _app
+    if _app is not None:
+        return _app
+
     research_agent = build_research_agent()
     analytics_agent = build_analytics_agent()
     strategy_agent = build_strategy_agent()
     seo_agent = build_seo_agent()
+    blog_agent = build_blog_agent()
+
     workflow = create_supervisor(
-        agents=[research_agent, analytics_agent, strategy_agent, seo_agent],
+        agents=[research_agent, analytics_agent, strategy_agent, seo_agent, blog_agent],
         model=get_llm(temperature=0.1),
         prompt=SUPERVISOR_PROMPT,
         output_mode="last_message",
     )
-    return workflow.compile()
+    _app = workflow.compile(checkpointer=get_checkpointer())
+    return _app

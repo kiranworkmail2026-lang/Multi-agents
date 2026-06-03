@@ -19,7 +19,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent_runtime import stream_events
+from typing import Any
+from agent_runtime import stream_events, resume_events, new_thread_id
 from ingest import ingest_all
 from vectordb import get_collection
 
@@ -70,25 +71,39 @@ def require_api_key(x_api_key: str | None = Header(default=None)):
 
 class QueryBody(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
+    thread_id: str | None = Field(default=None, max_length=64)
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+class ResumeBody(BaseModel):
+    thread_id: str = Field(..., min_length=1, max_length=64)
+    # The chosen value can be a topic object (dict) or a free-text override
+    # (str). FastAPI accepts both via `Any`.
+    chosen: Any = Field(...)
 
 
-@app.post("/query", dependencies=[Depends(require_api_key)])
-async def query(body: QueryBody) -> EventSourceResponse:
+# Map internal event type → SSE event name. Centralised so /query and
+# /resume stay consistent.
+_EVENT_NAME = {
+    "agent_update": "agent_update",
+    "final": "final",
+    "error": "error",
+    "pending_approval": "pending_approval",
+}
+
+
+def _sse_stream(producer_fn, *args, **kwargs):
+    """Wrap a sync generator (stream_events / resume_events) as an
+    EventSourceResponse. The sync generator runs in a thread; results
+    are pumped through an asyncio.Queue to the event loop."""
+
     async def gen() -> AsyncIterator[dict]:
         loop = asyncio.get_running_loop()
-        # stream_events is a sync generator (LangGraph .stream is sync).
-        # Run it in a thread and pull items off a queue so we don't block the loop.
         queue: asyncio.Queue = asyncio.Queue()
         SENTINEL = object()
 
         def producer():
             try:
-                for ev in stream_events(body.question):
+                for ev in producer_fn(*args, **kwargs):
                     asyncio.run_coroutine_threadsafe(queue.put(ev), loop)
             except Exception as e:  # pragma: no cover
                 asyncio.run_coroutine_threadsafe(
@@ -105,11 +120,35 @@ async def query(body: QueryBody) -> EventSourceResponse:
             if ev is SENTINEL:
                 yield {"event": "done", "data": "{}"}
                 return
-            event_name = {
-                "agent_update": "agent_update",
-                "final": "final",
-                "error": "error",
-            }.get(ev.get("type", ""), "message")
+            event_name = _EVENT_NAME.get(ev.get("type", ""), "message")
             yield {"event": event_name, "data": json.dumps(ev, default=str)}
 
     return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/query", dependencies=[Depends(require_api_key)])
+async def query(body: QueryBody) -> EventSourceResponse:
+    """Start a new agent run. Returns SSE.
+
+    Body: {"question": "...", "thread_id": "<optional uuid hex>"}
+    If thread_id is omitted, one is generated and echoed in every event.
+    If the run pauses on an interrupt (blog topic approval), the stream
+    emits a `pending_approval` event with {thread_id, payload} and closes.
+    Resume by POSTing the same thread_id to /resume with the chosen value.
+    """
+    tid = (body.thread_id or "").strip() or new_thread_id()
+    return _sse_stream(stream_events, body.question, thread_id=tid)
+
+
+@app.post("/resume", dependencies=[Depends(require_api_key)])
+async def resume(body: ResumeBody) -> EventSourceResponse:
+    """Resume a paused agent run with the human's chosen value.
+
+    Body: {"thread_id": "...", "chosen": <dict | str>}
+    """
+    return _sse_stream(resume_events, body.thread_id, body.chosen)

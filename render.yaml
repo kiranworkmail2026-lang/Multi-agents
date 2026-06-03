@@ -23,3 +23,11 @@ services:
       # Shared secret between this service and the Go backend.
       - key: SERVICE_API_KEY
         generateValue: true
+      # MongoDB connection for the LangGraph checkpointer (persists
+      # interrupted runs so /resume works across container restarts).
+      # If unset, the service falls back to an in-memory checkpointer
+      # — fine for testing, NOT for production (state lost on restart).
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: multi_agents
